@@ -89,12 +89,18 @@ export default function App() {
   const [showCheatsModal, setShowCheatsModal] = useState(false);
   const [cheats, setCheats] = useState<CheatEntry[]>([]);
   const [forceShowTouchControls, setForceShowTouchControls] = useState(false);
+  const [hideTouchControlsOnMobile, setHideTouchControlsOnMobile] = useState(false);
+  const [isLandscapeViewport, setIsLandscapeViewport] = useState(() =>
+    typeof window !== 'undefined' ? window.innerWidth > window.innerHeight : false
+  );
   const [isDragging, setIsDragging] = useState(false);
   const [gamepadConnected, setGamepadConnected] = useState<string | null>(null);
 
   const isAnyModalOpen = showCheatsModal || showControlsModal;
   const currentRomId = romLoaded ? getRomBaseName(currentRomPath || romName) : '';
   const activeCheatsCount = cheats.filter((c) => c.enabled).length;
+  const shouldShowTouchControls = isTouchOrMobile ? !hideTouchControlsOnMobile : forceShowTouchControls;
+  const isLandscapeTouchFullscreen = isFullscreen && romLoaded && shouldShowTouchControls && isLandscapeViewport;
 
   // Estados de Ranuras de Guardado (Save States)
   const [availableSlots, setAvailableSlots] = useState<Record<number, boolean>>({
@@ -165,14 +171,24 @@ export default function App() {
     }
   }, [emulator, initEmulator]);
 
-  // Monitorizar cambios de pantalla completa
+  // Monitorizar cambios de pantalla completa y orientación de pantalla (portrait / landscape)
   useEffect(() => {
     const onFullscreenChange = () => {
       setIsFullscreen(!!document.fullscreenElement);
     };
+    const onViewportResize = () => {
+      setIsLandscapeViewport(window.innerWidth > window.innerHeight);
+    };
+
     document.addEventListener('fullscreenchange', onFullscreenChange);
+    window.addEventListener('resize', onViewportResize);
+    window.addEventListener('orientationchange', onViewportResize);
+    onViewportResize();
+
     return () => {
       document.removeEventListener('fullscreenchange', onFullscreenChange);
+      window.removeEventListener('resize', onViewportResize);
+      window.removeEventListener('orientationchange', onViewportResize);
     };
   }, []);
 
@@ -1073,7 +1089,7 @@ export default function App() {
     setTimeout(() => setStatusMessage(''), 3000);
   };
 
-  // API para botones en pantallas táctiles
+  // API para botones en pantallas táctiles (con cancelación segura para Android Chrome)
   const bindTouch = (name: string) => ({
     onPointerDown: (e: React.PointerEvent) => {
       e.preventDefault();
@@ -1086,10 +1102,23 @@ export default function App() {
     onPointerLeave: (e: React.PointerEvent) => {
       e.preventDefault();
       emulator?.buttonUnpress(name);
-    }
+    },
+    onPointerCancel: (e: React.PointerEvent) => {
+      e.preventDefault();
+      emulator?.buttonUnpress(name);
+    },
+    onContextMenu: (e: React.MouseEvent) => e.preventDefault()
   });
 
   // Botón Turbo para botones A o B en táctil
+  const stopTurboButton = (name: string) => {
+    if (turboIntervalRef.current) {
+      clearInterval(turboIntervalRef.current);
+      turboIntervalRef.current = null;
+    }
+    emulator?.buttonUnpress(name);
+  };
+
   const bindTurboTouch = (name: string) => ({
     onPointerDown: (e: React.PointerEvent) => {
       e.preventDefault();
@@ -1107,21 +1136,48 @@ export default function App() {
     },
     onPointerUp: (e: React.PointerEvent) => {
       e.preventDefault();
-      if (turboIntervalRef.current) {
-        clearInterval(turboIntervalRef.current);
-        turboIntervalRef.current = null;
-      }
-      emulator?.buttonUnpress(name);
+      stopTurboButton(name);
     },
     onPointerLeave: (e: React.PointerEvent) => {
       e.preventDefault();
-      if (turboIntervalRef.current) {
-        clearInterval(turboIntervalRef.current);
-        turboIntervalRef.current = null;
-      }
-      emulator?.buttonUnpress(name);
-    }
+      stopTurboButton(name);
+    },
+    onPointerCancel: (e: React.PointerEvent) => {
+      e.preventDefault();
+      stopTurboButton(name);
+    },
+    onContextMenu: (e: React.MouseEvent) => e.preventDefault()
   });
+
+  // Control unificado de puntero para botones de Rebobinar
+  const bindRewindPointer = {
+    onPointerDown: (e: React.PointerEvent) => {
+      e.preventDefault();
+      startRewind();
+    },
+    onPointerUp: (e: React.PointerEvent) => {
+      e.preventDefault();
+      stopRewind();
+    },
+    onPointerLeave: (e: React.PointerEvent) => {
+      e.preventDefault();
+      stopRewind();
+    },
+    onPointerCancel: (e: React.PointerEvent) => {
+      e.preventDefault();
+      stopRewind();
+    },
+    onContextMenu: (e: React.MouseEvent) => e.preventDefault()
+  };
+
+  // Alternar visibilidad de controles táctiles (móvil o escritorio)
+  const toggleTouchControls = () => {
+    if (isTouchOrMobile) {
+      setHideTouchControlsOnMobile((prev) => !prev);
+    } else {
+      setForceShowTouchControls((prev) => !prev);
+    }
+  };
 
   // Estilo CSS de Filtro de Pantalla
   const getFilterStyle = () => {
@@ -1225,16 +1281,23 @@ export default function App() {
           </button>
 
           {/* Notificación de Estado Flotante Integrada */}
-          <div className="min-h-[34px] flex items-center px-3 py-1 rounded-full border border-gray-800/80 bg-gray-900/40 backdrop-blur-md max-w-xs">
+          <div className="min-h-[34px] flex items-center px-3.5 py-1 rounded-full border border-gray-800/80 bg-gray-900/40 backdrop-blur-md max-w-[92vw] sm:max-w-xs">
             {statusMessage ? (
-              <span className="text-xs text-amber-400 font-medium flex items-center gap-2 animate-pulse truncate">
-                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 inline-block flex-shrink-0" />
-                {statusMessage}
+              <span className="text-xs text-amber-400 font-medium flex items-center gap-2 min-w-0 animate-pulse">
+                <span className="w-2 h-2 rounded-full bg-amber-400 inline-block shrink-0" />
+                <span className="truncate">{statusMessage}</span>
               </span>
             ) : (
-              <span className="text-xs text-gray-400 flex items-center gap-2 truncate">
-                <span className={`w-1.5 h-1.5 rounded-full inline-block flex-shrink-0 ${emulatorReady ? 'bg-emerald-500 animate-ping' : 'bg-amber-500'}`} />
-                {romLoaded ? `Jugando: ${romName}` : emulatorReady ? 'Consola encendida' : 'Iniciando...'}
+              <span className="text-xs text-gray-300 flex items-center gap-2 min-w-0">
+                <span className="relative flex h-2 w-2 shrink-0">
+                  {emulatorReady && (
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                  )}
+                  <span className={`relative inline-flex rounded-full h-2 w-2 ${emulatorReady ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+                </span>
+                <span className="truncate">
+                  {romLoaded ? `Jugando: ${romName}` : emulatorReady ? 'Consola encendida' : 'Iniciando...'}
+                </span>
               </span>
             )}
           </div>
@@ -1247,82 +1310,122 @@ export default function App() {
         {/* COLUMNA PANTALLA GBA (8 de 12 col en desktop) */}
         <section className="lg:col-span-8 flex flex-col items-center gap-4">
 
-          {/* Bezel / Gabinete de la Pantalla */}
+          {/* Contenedor Unificado de Pantalla + Controles Táctiles (mantiene controles en Pantalla Completa) */}
           <div
             ref={containerRef}
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}
-            className={`w-full relative flex flex-col items-center rounded-2xl bg-[#161920] border-2 sm:border-4 border-gray-800/80 p-2.5 sm:p-5 shadow-2xl transition-all duration-300 hover:border-purple-900/40 shadow-purple-950/20 focus-within:ring-2 focus-within:ring-purple-500/50 ${
-              isFullscreen ? '!rounded-none !border-0 bg-black min-h-screen justify-center' : ''
-            }`}
+            className={
+              isFullscreen
+                ? 'w-screen h-[100dvh] bg-[#0a0c10] flex flex-col items-center justify-between px-2.5 pt-2 pb-3 sm:p-4 overflow-hidden select-none'
+                : 'w-full flex flex-col items-center gap-3 sm:gap-4'
+            }
           >
+            <div
+              className={
+                isLandscapeTouchFullscreen
+                  ? 'w-full flex-1 min-h-0 flex flex-row items-center justify-between gap-2'
+                  : isFullscreen
+                    ? 'w-full flex-1 min-h-0 flex flex-col items-center justify-between gap-2'
+                    : 'w-full flex flex-col items-center gap-3 sm:gap-4'
+              }
+            >
+              {/* Bezel / Gabinete de la Pantalla (siempre primer hijo para nunca desmontar el <canvas>) */}
+              <div
+                className={
+                  isLandscapeTouchFullscreen
+                    ? 'order-2 flex-1 min-w-0 h-full flex flex-col items-center justify-center gap-1.5'
+                    : isFullscreen
+                      ? `w-full flex flex-col items-center justify-center ${shouldShowTouchControls ? 'shrink-0' : 'flex-1 min-h-0'}`
+                      : 'w-full relative flex flex-col items-center rounded-2xl bg-[#161920] border-2 sm:border-4 border-gray-800/80 p-2.5 sm:p-5 shadow-2xl transition-all duration-300 hover:border-purple-900/40 shadow-purple-950/20 focus-within:ring-2 focus-within:ring-purple-500/50'
+                }
+              >
 
-            {/* Tira informativa con LED de Estado */}
-            <div className="w-full flex items-center justify-between pb-3 mb-2 border-b border-gray-800/60 font-mono text-xs text-gray-500">
-              <div className="flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full relative">
-                  <span className={`absolute inset-0 rounded-full ${
-                    isRunning && !isPaused ? 'bg-blue-500 animate-ping' :
-                    isPaused ? 'bg-amber-500 animate-pulse' :
-                    emulatorReady ? 'bg-emerald-500 animate-pulse' : 'bg-red-600'
-                  }`} />
-                  <span className={`block w-2 h-2 rounded-full ${
-                    isRunning && !isPaused ? 'bg-blue-400' :
-                    isPaused ? 'bg-amber-400' :
-                    emulatorReady ? 'bg-emerald-400' : 'bg-red-500'
-                  }`} />
-                </span>
-                <span className="text-[10px] tracking-widest text-gray-400">
-                  {isRunning && !isPaused ? (isRewinding ? 'STATUS: REWIND' : isTurboActive ? 'STATUS: TURBO' : 'STATUS: ACTIVE') :
-                   isPaused ? 'STATUS: PAUSED' :
-                   emulatorReady ? 'STATUS: READY' : 'STATUS: STANDBY'}
-                </span>
-              </div>
+                {/* Tira informativa con LED de Estado */}
+                <div className={`w-full flex items-center justify-between border-b border-gray-800/60 font-mono text-xs text-gray-500 ${
+                  isFullscreen ? 'pb-1.5 mb-1.5 max-w-5xl' : 'pb-2.5 mb-2'
+                }`}>
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="w-2 h-2 rounded-full relative shrink-0">
+                      <span className={`absolute inset-0 rounded-full ${
+                        isRunning && !isPaused ? 'bg-blue-500 animate-ping' :
+                        isPaused ? 'bg-amber-500 animate-pulse' :
+                        emulatorReady ? 'bg-emerald-500 animate-pulse' : 'bg-red-600'
+                      }`} />
+                      <span className={`block w-2 h-2 rounded-full ${
+                        isRunning && !isPaused ? 'bg-blue-400' :
+                        isPaused ? 'bg-amber-400' :
+                        emulatorReady ? 'bg-emerald-400' : 'bg-red-500'
+                      }`} />
+                    </span>
+                    <span className="text-[10px] tracking-widest text-gray-400 truncate">
+                      {isRunning && !isPaused ? (isRewinding ? 'STATUS: REWIND' : isTurboActive ? 'STATUS: TURBO' : 'STATUS: ACTIVE') :
+                       isPaused ? 'STATUS: PAUSED' :
+                       emulatorReady ? 'STATUS: READY' : 'STATUS: STANDBY'}
+                    </span>
+                  </div>
 
-              <div className="flex items-center gap-2">
-                {romLoaded && (
-                  <>
-                    <button
-                      onClick={toggleMute}
-                      className="p-1 text-gray-400 hover:text-white transition-colors cursor-pointer"
-                      title={isMuted ? 'Activar Sonido (M)' : 'Silenciar (M)'}
-                    >
-                      {isMuted || volume === 0 ? <VolumeX size={14} className="text-red-400" /> : <Volume2 size={14} />}
-                    </button>
-                    <button
-                      onMouseDown={startRewind}
-                      onMouseUp={stopRewind}
-                      onMouseLeave={stopRewind}
-                      onTouchStart={startRewind}
-                      onTouchEnd={stopRewind}
-                      className={`px-2 py-0.5 rounded text-[10px] font-mono flex items-center gap-1 transition-all cursor-pointer ${
-                        isRewinding ? 'bg-amber-600 text-white animate-pulse' : 'bg-gray-800 hover:bg-gray-700 text-gray-300'
-                      }`}
-                      title="Mantén presionado para rebobinar (Tecla R)"
-                    >
-                      <Rewind size={11} />
-                      <span className="hidden sm:inline">Rebobinar</span>
-                    </button>
-                    <button
-                      onClick={toggleFullscreen}
-                      className="p-1 text-gray-400 hover:text-white transition-colors cursor-pointer"
-                      title="Pantalla Completa (F)"
-                    >
-                      {isFullscreen ? <Minimize size={14} /> : <Maximize size={14} />}
-                    </button>
-                  </>
-                )}
-                <div className="text-[10px] tracking-wider text-gray-500 font-mono hidden xs:inline">
-                  {romLoaded ? `${colorFilter.toUpperCase()}-MATRIX` : 'AUTO-DETECTION'}
+                  <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+                    {romLoaded && (
+                      <>
+                        <button
+                          onClick={toggleMute}
+                          className="p-1.5 rounded-md text-gray-400 hover:text-white hover:bg-gray-800/70 transition-colors cursor-pointer"
+                          title={isMuted ? 'Activar Sonido (M)' : 'Silenciar (M)'}
+                        >
+                          {isMuted || volume === 0 ? <VolumeX size={14} className="text-red-400" /> : <Volume2 size={14} />}
+                        </button>
+                        <button
+                          {...bindRewindPointer}
+                          className={`px-2 py-1 rounded text-[10px] font-mono flex items-center gap-1 transition-all cursor-pointer touch-none select-none ${
+                            isRewinding ? 'bg-amber-600 text-white animate-pulse' : 'bg-gray-800 hover:bg-gray-700 text-gray-300'
+                          }`}
+                          title="Mantén presionado para rebobinar (Tecla R)"
+                        >
+                          <Rewind size={11} />
+                          <span className="hidden sm:inline">Rebobinar</span>
+                        </button>
+                        {isTouchOrMobile && (
+                          <button
+                            onClick={toggleTouchControls}
+                            className={`p-1.5 rounded-md transition-colors cursor-pointer ${
+                              shouldShowTouchControls
+                                ? 'text-purple-400 hover:text-purple-300 hover:bg-gray-800/70'
+                                : 'text-gray-500 hover:text-gray-300 hover:bg-gray-800/70'
+                            }`}
+                            title={shouldShowTouchControls ? 'Ocultar controles táctiles (ideal con mando Bluetooth)' : 'Mostrar controles táctiles'}
+                          >
+                            <Gamepad2 size={14} />
+                          </button>
+                        )}
+                        <button
+                          onClick={toggleFullscreen}
+                          className="p-1.5 rounded-md text-gray-400 hover:text-white hover:bg-gray-800/70 transition-colors cursor-pointer"
+                          title="Pantalla Completa (F)"
+                        >
+                          {isFullscreen ? <Minimize size={14} /> : <Maximize size={14} />}
+                        </button>
+                      </>
+                    )}
+                    <div className="text-[10px] tracking-wider text-gray-500 font-mono hidden sm:inline">
+                      {romLoaded ? `${colorFilter.toUpperCase()}-MATRIX` : 'AUTO-DETECTION'}
+                    </div>
+                  </div>
                 </div>
-              </div>
-            </div>
 
-            {/* Contenedor del Canvas y Overlays (Con min-h para evitar que se recorten botones en móvil) */}
-            <div className={`relative w-full aspect-[3/2] min-h-[220px] ${
-              isFullscreen ? 'max-h-[90vh]' : 'max-h-[300px] xs:max-h-[340px] sm:max-h-[460px]'
-            } rounded-lg overflow-hidden bg-black shadow-[inset_0_0_15px_rgba(0,0,0,0.9)] border border-gray-900 group`}>
+                {/* Contenedor del Canvas y Overlays */}
+                <div
+                  className={`relative aspect-[3/2] rounded-lg overflow-hidden bg-black shadow-[inset_0_0_15px_rgba(0,0,0,0.9)] border border-gray-900 group ${
+                    isLandscapeTouchFullscreen
+                      ? 'w-full max-w-[min(100%,calc((100dvh-58px)*1.5))] max-h-[calc(100dvh-58px)]'
+                      : isFullscreen
+                        ? shouldShowTouchControls
+                          ? 'w-full max-w-[min(100%,calc(45dvh*1.5))] max-h-[45dvh]'
+                          : 'w-full max-w-[min(100%,calc((100dvh-64px)*1.5))] max-h-[calc(100dvh-64px)]'
+                        : 'w-full min-h-[220px] max-h-[300px] xs:max-h-[340px] sm:max-h-[460px]'
+                  }`}
+                >
 
               {/* Canvas Principal GBA */}
               <canvas
@@ -1512,124 +1615,257 @@ export default function App() {
               ref={patchInputRef}
               onChange={handlePatchUpload}
             />
-          </div>
-
-          {/* D-PAD TÁCTIL Y CONTROLES VIRTUALES (En móviles o activado por el usuario) */}
-          {romLoaded && (isTouchOrMobile || forceShowTouchControls) && (
-            <div className="w-full max-w-md bg-gray-900/30 rounded-2xl p-3 xs:p-4 border border-gray-800/60 transition-all my-2 shadow-xl">
-
-              {/* Botones de hombro L & R en panel superior */}
-              <div className="flex justify-between items-center mb-3 sm:mb-4 px-1">
-                <button
-                  className="px-4 py-1.5 bg-gray-800 active:bg-purple-600 border border-gray-700/50 hover:bg-gray-700 text-[10px] sm:text-xs font-bold text-gray-300 rounded-lg active:scale-95 transition-all select-none shadow"
-                  {...bindTouch('L')}
-                >
-                  L Shoulder
-                </button>
-                <button
-                  onMouseDown={startRewind}
-                  onMouseUp={stopRewind}
-                  onTouchStart={startRewind}
-                  onTouchEnd={stopRewind}
-                  className={`px-3 py-1 rounded-lg text-[10px] font-mono flex items-center gap-1 font-bold ${
-                    isRewinding ? 'bg-amber-600 text-white animate-pulse' : 'bg-gray-800 text-amber-400 border border-gray-700'
-                  }`}
-                >
-                  <Rewind size={11} /> Rebobinar
-                </button>
-                <button
-                  className="px-4 py-1.5 bg-gray-800 active:bg-purple-600 border border-gray-700/50 hover:bg-gray-700 text-[10px] sm:text-xs font-bold text-gray-300 rounded-lg active:scale-95 transition-all select-none shadow"
-                  {...bindTouch('R')}
-                >
-                  R Shoulder
-                </button>
               </div>
 
-              {/* D-Pad y botones principales */}
-              <div className="flex justify-between items-center w-full px-1 sm:px-2 gap-2">
-
-                {/* D-Pad de cruceta retro */}
-                <div className="relative w-[116px] h-[116px] xs:w-[130px] xs:h-[130px] sm:w-36 sm:h-36 bg-gray-950/80 rounded-full border-4 border-gray-800 shadow-xl flex items-center justify-center">
-                  <button
-                    className="absolute top-1 left-9 xs:left-11 sm:left-12 w-8 xs:w-9 sm:w-10 h-10 xs:h-11 sm:h-12 bg-gray-800 active:bg-purple-600 border-b border-gray-900 rounded-t-md active:scale-95 select-none"
-                    {...bindTouch('Up')}
-                  />
-                  <button
-                    className="absolute bottom-1 left-9 xs:left-11 sm:left-12 w-8 xs:w-9 sm:w-10 h-10 xs:h-11 sm:h-12 bg-gray-800 active:bg-purple-600 border-t border-gray-900 rounded-b-md active:scale-95 select-none"
-                    {...bindTouch('Down')}
-                  />
-                  <button
-                    className="absolute left-1 top-9 xs:top-11 sm:top-12 w-10 xs:w-11 sm:w-12 h-8 xs:h-9 sm:h-10 bg-gray-800 active:bg-purple-600 border-r border-gray-900 rounded-l-md active:scale-95 select-none"
-                    {...bindTouch('Left')}
-                  />
-                  <button
-                    className="absolute right-1 top-9 xs:top-11 sm:top-12 w-10 xs:w-11 sm:w-12 h-8 xs:h-9 sm:h-10 bg-gray-800 active:bg-purple-600 border-l border-gray-900 rounded-r-md active:scale-95 select-none"
-                    {...bindTouch('Right')}
-                  />
-                  <div className="w-8 h-8 xs:w-9 xs:h-9 sm:w-10 sm:h-10 bg-gray-900 rounded-full flex items-center justify-center pointer-events-none shadow-inner" />
-                </div>
-
-                {/* Botones de acción A & B cruzados + Turbo */}
-                <div className="flex flex-col gap-2 transform rotate-12 relative">
-                  <div className="flex gap-2 justify-end">
+              {/* D-PAD TÁCTIL Y CONTROLES VIRTUALES — MODO HORIZONTAL EN PANTALLA COMPLETA (3 COLUMNAS TIPO CONSOLA PORTÁTIL) */}
+              {romLoaded && shouldShowTouchControls && isLandscapeTouchFullscreen && (
+                <>
+                  {/* Columna Izquierda: L + D-Pad + Select */}
+                  <div className="order-1 w-[144px] sm:w-[164px] shrink-0 h-full flex flex-col items-center justify-between py-2 px-1 touch-none select-none">
                     <button
-                      className="px-2 py-0.5 bg-pink-950/80 border border-pink-700/60 text-pink-300 text-[9px] font-mono font-bold rounded active:scale-95 select-none"
-                      {...bindTurboTouch('B')}
+                      className="w-full py-2 bg-gray-800/90 active:bg-purple-600 border border-gray-700/70 text-xs font-bold text-gray-200 rounded-xl active:scale-95 transition-all select-none touch-none shadow"
+                      {...bindTouch('L')}
                     >
-                      Turbo B
+                      L Shoulder
                     </button>
-                    <button
-                      className="px-2 py-0.5 bg-purple-950/80 border border-purple-700/60 text-purple-300 text-[9px] font-mono font-bold rounded active:scale-95 select-none"
-                      {...bindTurboTouch('A')}
-                    >
-                      Turbo A
-                    </button>
-                  </div>
 
-                  <div className="flex gap-2.5 xs:gap-4">
+                    {/* D-Pad centrado matemáticamente */}
+                    <div className="relative w-[124px] h-[124px] sm:w-[136px] sm:h-[136px] bg-gray-950/85 rounded-full border-4 border-gray-800 shadow-xl touch-none select-none">
+                      <button
+                        aria-label="Arriba"
+                        className="absolute top-1.5 left-1/2 -translate-x-1/2 w-9 h-10 sm:w-10 sm:h-11 bg-gray-800 active:bg-purple-600 border border-gray-900 rounded-t-lg active:scale-95 select-none touch-none flex items-start justify-center pt-1 text-[10px] text-gray-400"
+                        {...bindTouch('Up')}
+                      >
+                        ▲
+                      </button>
+                      <button
+                        aria-label="Abajo"
+                        className="absolute bottom-1.5 left-1/2 -translate-x-1/2 w-9 h-10 sm:w-10 sm:h-11 bg-gray-800 active:bg-purple-600 border border-gray-900 rounded-b-lg active:scale-95 select-none touch-none flex items-end justify-center pb-1 text-[10px] text-gray-400"
+                        {...bindTouch('Down')}
+                      >
+                        ▼
+                      </button>
+                      <button
+                        aria-label="Izquierda"
+                        className="absolute left-1.5 top-1/2 -translate-y-1/2 w-10 h-9 sm:w-11 sm:h-10 bg-gray-800 active:bg-purple-600 border border-gray-900 rounded-l-lg active:scale-95 select-none touch-none flex items-center justify-start pl-1 text-[10px] text-gray-400"
+                        {...bindTouch('Left')}
+                      >
+                        ◄
+                      </button>
+                      <button
+                        aria-label="Derecha"
+                        className="absolute right-1.5 top-1/2 -translate-y-1/2 w-10 h-9 sm:w-11 sm:h-10 bg-gray-800 active:bg-purple-600 border border-gray-900 rounded-r-lg active:scale-95 select-none touch-none flex items-center justify-end pr-1 text-[10px] text-gray-400"
+                        {...bindTouch('Right')}
+                      >
+                        ►
+                      </button>
+                      <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-8 h-8 sm:w-9 sm:h-9 bg-gray-900 rounded-full pointer-events-none shadow-inner border border-gray-800/80" />
+                    </div>
+
                     <div className="flex flex-col items-center">
                       <button
-                        className="w-11 h-11 xs:w-12 xs:h-12 sm:w-14 sm:h-14 bg-pink-700 active:bg-pink-500 border-2 sm:border-4 border-gray-900 rounded-full shadow-lg flex items-center justify-center font-bold text-sm sm:text-base text-white active:scale-90 transition-transform select-none"
-                        {...bindTouch('B')}
-                      >
-                        B
-                      </button>
-                      <span className="text-[8px] sm:text-[9px] text-gray-500 font-mono tracking-widest mt-1 select-none">CANCEL</span>
-                    </div>
-                    <div className="flex flex-col items-center -mt-4 sm:-mt-6">
-                      <button
-                        className="w-11 h-11 xs:w-12 xs:h-12 sm:w-14 sm:h-14 bg-purple-600 active:bg-purple-400 border-2 sm:border-4 border-gray-900 rounded-full shadow-lg flex items-center justify-center font-bold text-sm sm:text-base text-white active:scale-90 transition-transform select-none"
-                        {...bindTouch('A')}
-                      >
-                        A
-                      </button>
-                      <span className="text-[8px] sm:text-[9px] text-gray-500 font-mono tracking-widest mt-1 select-none">ACTION</span>
+                        aria-label="Select"
+                        className="w-16 h-5 bg-gray-800 active:bg-purple-600 border-2 border-gray-950 rounded-full shadow active:scale-90 select-none touch-none"
+                        {...bindTouch('Select')}
+                      />
+                      <span className="text-[9px] uppercase font-bold text-gray-400 mt-1 tracking-wider select-none">Select</span>
                     </div>
                   </div>
-                </div>
 
-              </div>
+                  {/* Columna Derecha: R + Turbo/A/B sin solapamiento + Start */}
+                  <div className="order-3 w-[144px] sm:w-[164px] shrink-0 h-full flex flex-col items-center justify-between py-2 px-1 touch-none select-none">
+                    <button
+                      className="w-full py-2 bg-gray-800/90 active:bg-purple-600 border border-gray-700/70 text-xs font-bold text-gray-200 rounded-xl active:scale-95 transition-all select-none touch-none shadow"
+                      {...bindTouch('R')}
+                    >
+                      R Shoulder
+                    </button>
 
-              {/* Botones Select & Start del centro */}
-              <div className="flex justify-center gap-6 xs:gap-10 mt-4 sm:mt-6 pt-2 sm:pt-3 border-t border-gray-800/40">
-                <div className="flex flex-col items-center">
-                  <button
-                    className="w-12 xs:w-14 sm:w-16 h-4 sm:h-5 bg-gray-800 active:bg-purple-600 border-2 border-gray-950 rounded-full shadow active:scale-90 select-none"
-                    {...bindTouch('Select')}
-                  />
-                  <span className="text-[8px] sm:text-[9px] uppercase font-bold text-gray-500 mt-1 sm:mt-1.5 tracking-wider select-none">Select</span>
-                </div>
-                <div className="flex flex-col items-center">
-                  <button
-                    className="w-12 xs:w-14 sm:w-16 h-4 sm:h-5 bg-gray-800 active:bg-purple-600 border-2 border-gray-950 rounded-full shadow active:scale-90 select-none"
-                    {...bindTouch('Start')}
-                  />
-                  <span className="text-[8px] sm:text-[9px] uppercase font-bold text-gray-500 mt-1 sm:mt-1.5 tracking-wider select-none">Start</span>
-                </div>
-              </div>
+                    <div className="flex flex-col items-center gap-3 w-full">
+                      <div className="flex items-center justify-center gap-2 w-full">
+                        <button
+                          className="flex-1 py-1 bg-pink-950/90 active:bg-pink-600 border border-pink-700/70 text-pink-200 text-[9px] font-mono font-bold rounded-md active:scale-95 select-none touch-none"
+                          {...bindTurboTouch('B')}
+                        >
+                          Turbo B
+                        </button>
+                        <button
+                          className="flex-1 py-1 bg-purple-950/90 active:bg-purple-600 border border-purple-700/70 text-purple-200 text-[9px] font-mono font-bold rounded-md active:scale-95 select-none touch-none"
+                          {...bindTurboTouch('A')}
+                        >
+                          Turbo A
+                        </button>
+                      </div>
 
+                      <div className="flex items-start justify-center gap-3">
+                        <div className="flex flex-col items-center mt-4">
+                          <button
+                            className="w-12 h-12 sm:w-14 sm:h-14 bg-pink-700 active:bg-pink-500 border-[3px] border-gray-900 rounded-full shadow-lg flex items-center justify-center font-bold text-base text-white active:scale-90 transition-transform select-none touch-none"
+                            {...bindTouch('B')}
+                          >
+                            B
+                          </button>
+                          <span className="text-[8px] text-gray-400 font-mono tracking-widest mt-1 select-none">CANCEL</span>
+                        </div>
+                        <div className="flex flex-col items-center">
+                          <button
+                            className="w-12 h-12 sm:w-14 sm:h-14 bg-purple-600 active:bg-purple-400 border-[3px] border-gray-900 rounded-full shadow-lg flex items-center justify-center font-bold text-base text-white active:scale-90 transition-transform select-none touch-none"
+                            {...bindTouch('A')}
+                          >
+                            A
+                          </button>
+                          <span className="text-[8px] text-gray-400 font-mono tracking-widest mt-1 select-none">ACTION</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col items-center">
+                      <button
+                        aria-label="Start"
+                        className="w-16 h-5 bg-gray-800 active:bg-purple-600 border-2 border-gray-950 rounded-full shadow active:scale-90 select-none touch-none"
+                        {...bindTouch('Start')}
+                      />
+                      <span className="text-[9px] uppercase font-bold text-gray-400 mt-1 tracking-wider select-none">Start</span>
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {/* D-PAD TÁCTIL Y CONTROLES VIRTUALES — MODO VERTICAL (NORMAL Y PANTALLA COMPLETA PORTRAIT) */}
+              {romLoaded && shouldShowTouchControls && !isLandscapeTouchFullscreen && (
+                <div
+                  className={`w-full max-w-md rounded-2xl border border-gray-800/60 transition-all shadow-xl touch-none select-none flex flex-col justify-between ${
+                    isFullscreen
+                      ? 'flex-1 bg-gray-900/50 p-3.5 sm:p-4 max-h-[340px] my-auto'
+                      : 'bg-gray-900/35 p-3.5 xs:p-4 my-1'
+                  }`}
+                >
+
+                  {/* Botones de hombro L & R en panel superior */}
+                  <div className="flex justify-between items-center gap-2 mb-3.5 px-0.5">
+                    <button
+                      className="px-4 py-2 bg-gray-800 active:bg-purple-600 border border-gray-700/60 hover:bg-gray-700 text-[11px] sm:text-xs font-bold text-gray-200 rounded-xl active:scale-95 transition-all select-none touch-none shadow"
+                      {...bindTouch('L')}
+                    >
+                      L Shoulder
+                    </button>
+                    <button
+                      {...bindRewindPointer}
+                      className={`px-3 py-1.5 rounded-xl text-[10px] font-mono flex items-center gap-1.5 font-bold select-none touch-none transition-all ${
+                        isRewinding ? 'bg-amber-600 text-white animate-pulse' : 'bg-gray-800 text-amber-400 border border-gray-700/70'
+                      }`}
+                    >
+                      <Rewind size={12} /> Rebobinar
+                    </button>
+                    <button
+                      className="px-4 py-2 bg-gray-800 active:bg-purple-600 border border-gray-700/60 hover:bg-gray-700 text-[11px] sm:text-xs font-bold text-gray-200 rounded-xl active:scale-95 transition-all select-none touch-none shadow"
+                      {...bindTouch('R')}
+                    >
+                      R Shoulder
+                    </button>
+                  </div>
+
+                  {/* D-Pad y botones principales (centrado exacto y sin solapamiento) */}
+                  <div className="flex justify-between items-center w-full px-1 sm:px-2 gap-3 my-auto">
+
+                    {/* D-Pad de cruceta retro centrado matemáticamente */}
+                    <div className="relative w-[124px] h-[124px] xs:w-[134px] xs:h-[134px] sm:w-36 sm:h-36 shrink-0 bg-gray-950/85 rounded-full border-4 border-gray-800 shadow-xl touch-none select-none">
+                      <button
+                        aria-label="Arriba"
+                        className="absolute top-1.5 left-1/2 -translate-x-1/2 w-9 xs:w-10 h-10 xs:h-11 bg-gray-800 active:bg-purple-600 border border-gray-900 rounded-t-lg active:scale-95 select-none touch-none flex items-start justify-center pt-1 text-[10px] text-gray-400"
+                        {...bindTouch('Up')}
+                      >
+                        ▲
+                      </button>
+                      <button
+                        aria-label="Abajo"
+                        className="absolute bottom-1.5 left-1/2 -translate-x-1/2 w-9 xs:w-10 h-10 xs:h-11 bg-gray-800 active:bg-purple-600 border border-gray-900 rounded-b-lg active:scale-95 select-none touch-none flex items-end justify-center pb-1 text-[10px] text-gray-400"
+                        {...bindTouch('Down')}
+                      >
+                        ▼
+                      </button>
+                      <button
+                        aria-label="Izquierda"
+                        className="absolute left-1.5 top-1/2 -translate-y-1/2 w-10 xs:w-11 h-9 xs:h-10 bg-gray-800 active:bg-purple-600 border border-gray-900 rounded-l-lg active:scale-95 select-none touch-none flex items-center justify-start pl-1 text-[10px] text-gray-400"
+                        {...bindTouch('Left')}
+                      >
+                        ◄
+                      </button>
+                      <button
+                        aria-label="Derecha"
+                        className="absolute right-1.5 top-1/2 -translate-y-1/2 w-10 xs:w-11 h-9 xs:h-10 bg-gray-800 active:bg-purple-600 border border-gray-900 rounded-r-lg active:scale-95 select-none touch-none flex items-center justify-end pr-1 text-[10px] text-gray-400"
+                        {...bindTouch('Right')}
+                      >
+                        ►
+                      </button>
+                      <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-8 h-8 xs:w-9 xs:h-9 bg-gray-900 rounded-full pointer-events-none shadow-inner border border-gray-800/80" />
+                    </div>
+
+                    {/* Botones de acción A & B en escalón ergonómico + Turbo claramente separados */}
+                    <div className="flex flex-col items-end gap-3 shrink-0">
+                      <div className="flex items-center justify-end gap-2 w-full">
+                        <button
+                          className="px-2.5 py-1 bg-pink-950/85 active:bg-pink-600 border border-pink-700/60 text-pink-200 text-[10px] font-mono font-bold rounded-lg active:scale-95 select-none touch-none shadow-sm"
+                          {...bindTurboTouch('B')}
+                        >
+                          Turbo B
+                        </button>
+                        <button
+                          className="px-2.5 py-1 bg-purple-950/85 active:bg-purple-600 border border-purple-700/60 text-purple-200 text-[10px] font-mono font-bold rounded-lg active:scale-95 select-none touch-none shadow-sm"
+                          {...bindTurboTouch('A')}
+                        >
+                          Turbo A
+                        </button>
+                      </div>
+
+                      <div className="flex items-start gap-3.5 xs:gap-4 pr-1">
+                        <div className="flex flex-col items-center mt-4">
+                          <button
+                            className="w-[52px] h-[52px] sm:w-14 sm:h-14 bg-pink-700 active:bg-pink-500 border-[3px] border-gray-900 rounded-full shadow-lg flex items-center justify-center font-bold text-base text-white active:scale-90 transition-transform select-none touch-none"
+                            {...bindTouch('B')}
+                          >
+                            B
+                          </button>
+                          <span className="text-[8px] sm:text-[9px] text-gray-400 font-mono tracking-widest mt-1 select-none">CANCEL</span>
+                        </div>
+                        <div className="flex flex-col items-center">
+                          <button
+                            className="w-[52px] h-[52px] sm:w-14 sm:h-14 bg-purple-600 active:bg-purple-400 border-[3px] border-gray-900 rounded-full shadow-lg flex items-center justify-center font-bold text-base text-white active:scale-90 transition-transform select-none touch-none"
+                            {...bindTouch('A')}
+                          >
+                            A
+                          </button>
+                          <span className="text-[8px] sm:text-[9px] text-gray-400 font-mono tracking-widest mt-1 select-none">ACTION</span>
+                        </div>
+                      </div>
+                    </div>
+
+                  </div>
+
+                  {/* Botones Select & Start del centro */}
+                  <div className="flex justify-center gap-8 xs:gap-10 mt-3.5 pt-2.5 border-t border-gray-800/40">
+                    <div className="flex flex-col items-center">
+                      <button
+                        aria-label="Select"
+                        className="w-14 sm:w-16 h-5 bg-gray-800 active:bg-purple-600 border-2 border-gray-950 rounded-full shadow active:scale-90 select-none touch-none"
+                        {...bindTouch('Select')}
+                      />
+                      <span className="text-[8px] sm:text-[9px] uppercase font-bold text-gray-400 mt-1 tracking-wider select-none">Select</span>
+                    </div>
+                    <div className="flex flex-col items-center">
+                      <button
+                        aria-label="Start"
+                        className="w-14 sm:w-16 h-5 bg-gray-800 active:bg-purple-600 border-2 border-gray-950 rounded-full shadow active:scale-90 select-none touch-none"
+                        {...bindTouch('Start')}
+                      />
+                      <span className="text-[8px] sm:text-[9px] uppercase font-bold text-gray-400 mt-1 tracking-wider select-none">Start</span>
+                    </div>
+                  </div>
+
+                </div>
+              )}
             </div>
-          )}
+          </div>
 
           {/* TECLADO DE ESCRITORIO GUÍA VISUAL */}
           {emulatorReady && (
