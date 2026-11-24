@@ -1,0 +1,6 @@
+{
+  "name": "mGBA Web Emulator",
+  "description": "Un emulador Wasm de Game Boy / Color / Advance en el navegador con soporte para hilos y controles táctiles.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}

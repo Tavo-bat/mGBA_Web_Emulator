@@ -1,0 +1,17 @@
+@import "tailwindcss";
+
+body {
+  background-color: #121212;
+  color: #fff;
+  font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
+  margin: 0;
+  overflow-x: hidden;
+  user-select: none;
+}
+
+canvas {
+  image-rendering: pixelated; /* Para máxima fidelidad retro */
+  image-rendering: crisp-edges;
+  outline: none;
+  touch-action: none; /* Prevents scrolling on mobile swipe */
+}
