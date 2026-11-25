@@ -30,11 +30,17 @@ import {
   X,
   FolderOpen,
   ExternalLink,
-  Wand2
+  Wand2,
+  Compass
 } from 'lucide-react';
 import mGBA, { type mGBAEmulator } from '@thenick775/mgba-wasm';
 import { generateHomebrewDemoRom } from './demoRom';
 import { CheatsModal } from './components/CheatsModal';
+import {
+  TouchDirectionPad,
+  type DirectionKey,
+  type DirectionPadMode
+} from './components/TouchDirectionPad';
 import {
   type CheatEntry,
   exportCheatsAsFile,
@@ -90,6 +96,11 @@ export default function App() {
   const [cheats, setCheats] = useState<CheatEntry[]>([]);
   const [forceShowTouchControls, setForceShowTouchControls] = useState(false);
   const [hideTouchControlsOnMobile, setHideTouchControlsOnMobile] = useState(false);
+  const [directionPadMode, setDirectionPadMode] = useState<DirectionPadMode>(() => {
+    if (typeof window === 'undefined') return 'joystick';
+    const saved = localStorage.getItem('mgba_direction_pad_mode');
+    return saved === 'dpad' ? 'dpad' : 'joystick';
+  });
   const [isLandscapeViewport, setIsLandscapeViewport] = useState(() =>
     typeof window !== 'undefined' ? window.innerWidth > window.innerHeight : false
   );
@@ -1179,6 +1190,35 @@ export default function App() {
     }
   };
 
+  // Alternar entre Joystick virtual (estilo Genshin) y Cruceta deslizable
+  const toggleDirectionPadMode = useCallback(() => {
+    setDirectionPadMode((prev) => {
+      const next: DirectionPadMode = prev === 'joystick' ? 'dpad' : 'joystick';
+      try {
+        localStorage.setItem('mgba_direction_pad_mode', next);
+      } catch {
+        // Ignorar errores de cuota/almacenamiento privado
+      }
+      setStatusMessage(next === 'joystick' ? 'Control direccional: Joystick táctil' : 'Control direccional: Cruceta deslizable');
+      setTimeout(() => setStatusMessage(''), 2500);
+      return next;
+    });
+  }, []);
+
+  const handleDirectionPress = useCallback(
+    (direction: DirectionKey) => {
+      emulator?.buttonPress(direction);
+    },
+    [emulator]
+  );
+
+  const handleDirectionUnpress = useCallback(
+    (direction: DirectionKey) => {
+      emulator?.buttonUnpress(direction);
+    },
+    [emulator]
+  );
+
   // Estilo CSS de Filtro de Pantalla
   const getFilterStyle = () => {
     switch (colorFilter) {
@@ -1386,6 +1426,24 @@ export default function App() {
                           <Rewind size={11} />
                           <span className="hidden sm:inline">Rebobinar</span>
                         </button>
+                        {shouldShowTouchControls && (
+                          <button
+                            onClick={toggleDirectionPadMode}
+                            className={`px-2 py-1 rounded text-[10px] font-mono flex items-center gap-1 transition-all cursor-pointer border ${
+                              directionPadMode === 'joystick'
+                                ? 'bg-cyan-950/60 border-cyan-500/40 text-cyan-300 hover:bg-cyan-900/60'
+                                : 'bg-gray-800 border-gray-700 text-purple-300 hover:bg-gray-700'
+                            }`}
+                            title={
+                              directionPadMode === 'joystick'
+                                ? 'Modo Joystick activo (pulsa para cambiar a Cruceta)'
+                                : 'Modo Cruceta activo (pulsa para cambiar a Joystick)'
+                            }
+                          >
+                            <Compass size={11} />
+                            <span>{directionPadMode === 'joystick' ? 'Joystick' : 'Cruceta'}</span>
+                          </button>
+                        )}
                         {isTouchOrMobile && (
                           <button
                             onClick={toggleTouchControls}
@@ -1629,38 +1687,13 @@ export default function App() {
                       L Shoulder
                     </button>
 
-                    {/* D-Pad centrado matemáticamente */}
-                    <div className="relative w-[124px] h-[124px] sm:w-[136px] sm:h-[136px] bg-gray-950/85 rounded-full border-4 border-gray-800 shadow-xl touch-none select-none">
-                      <button
-                        aria-label="Arriba"
-                        className="absolute top-1.5 left-1/2 -translate-x-1/2 w-9 h-10 sm:w-10 sm:h-11 bg-gray-800 active:bg-purple-600 border border-gray-900 rounded-t-lg active:scale-95 select-none touch-none flex items-start justify-center pt-1 text-[10px] text-gray-400"
-                        {...bindTouch('Up')}
-                      >
-                        ▲
-                      </button>
-                      <button
-                        aria-label="Abajo"
-                        className="absolute bottom-1.5 left-1/2 -translate-x-1/2 w-9 h-10 sm:w-10 sm:h-11 bg-gray-800 active:bg-purple-600 border border-gray-900 rounded-b-lg active:scale-95 select-none touch-none flex items-end justify-center pb-1 text-[10px] text-gray-400"
-                        {...bindTouch('Down')}
-                      >
-                        ▼
-                      </button>
-                      <button
-                        aria-label="Izquierda"
-                        className="absolute left-1.5 top-1/2 -translate-y-1/2 w-10 h-9 sm:w-11 sm:h-10 bg-gray-800 active:bg-purple-600 border border-gray-900 rounded-l-lg active:scale-95 select-none touch-none flex items-center justify-start pl-1 text-[10px] text-gray-400"
-                        {...bindTouch('Left')}
-                      >
-                        ◄
-                      </button>
-                      <button
-                        aria-label="Derecha"
-                        className="absolute right-1.5 top-1/2 -translate-y-1/2 w-10 h-9 sm:w-11 sm:h-10 bg-gray-800 active:bg-purple-600 border border-gray-900 rounded-r-lg active:scale-95 select-none touch-none flex items-center justify-end pr-1 text-[10px] text-gray-400"
-                        {...bindTouch('Right')}
-                      >
-                        ►
-                      </button>
-                      <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-8 h-8 sm:w-9 sm:h-9 bg-gray-900 rounded-full pointer-events-none shadow-inner border border-gray-800/80" />
-                    </div>
+                    {/* Joystick virtual / Cruceta deslizable */}
+                    <TouchDirectionPad
+                      mode={directionPadMode}
+                      onPress={handleDirectionPress}
+                      onUnpress={handleDirectionUnpress}
+                      sizeClassName="w-[128px] h-[128px] sm:w-[140px] sm:h-[140px]"
+                    />
 
                     <div className="flex flex-col items-center">
                       <button
@@ -1768,38 +1801,13 @@ export default function App() {
                   {/* D-Pad y botones principales (centrado exacto y sin solapamiento) */}
                   <div className="flex justify-between items-center w-full px-1 sm:px-2 gap-3 my-auto">
 
-                    {/* D-Pad de cruceta retro centrado matemáticamente */}
-                    <div className="relative w-[124px] h-[124px] xs:w-[134px] xs:h-[134px] sm:w-36 sm:h-36 shrink-0 bg-gray-950/85 rounded-full border-4 border-gray-800 shadow-xl touch-none select-none">
-                      <button
-                        aria-label="Arriba"
-                        className="absolute top-1.5 left-1/2 -translate-x-1/2 w-9 xs:w-10 h-10 xs:h-11 bg-gray-800 active:bg-purple-600 border border-gray-900 rounded-t-lg active:scale-95 select-none touch-none flex items-start justify-center pt-1 text-[10px] text-gray-400"
-                        {...bindTouch('Up')}
-                      >
-                        ▲
-                      </button>
-                      <button
-                        aria-label="Abajo"
-                        className="absolute bottom-1.5 left-1/2 -translate-x-1/2 w-9 xs:w-10 h-10 xs:h-11 bg-gray-800 active:bg-purple-600 border border-gray-900 rounded-b-lg active:scale-95 select-none touch-none flex items-end justify-center pb-1 text-[10px] text-gray-400"
-                        {...bindTouch('Down')}
-                      >
-                        ▼
-                      </button>
-                      <button
-                        aria-label="Izquierda"
-                        className="absolute left-1.5 top-1/2 -translate-y-1/2 w-10 xs:w-11 h-9 xs:h-10 bg-gray-800 active:bg-purple-600 border border-gray-900 rounded-l-lg active:scale-95 select-none touch-none flex items-center justify-start pl-1 text-[10px] text-gray-400"
-                        {...bindTouch('Left')}
-                      >
-                        ◄
-                      </button>
-                      <button
-                        aria-label="Derecha"
-                        className="absolute right-1.5 top-1/2 -translate-y-1/2 w-10 xs:w-11 h-9 xs:h-10 bg-gray-800 active:bg-purple-600 border border-gray-900 rounded-r-lg active:scale-95 select-none touch-none flex items-center justify-end pr-1 text-[10px] text-gray-400"
-                        {...bindTouch('Right')}
-                      >
-                        ►
-                      </button>
-                      <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-8 h-8 xs:w-9 xs:h-9 bg-gray-900 rounded-full pointer-events-none shadow-inner border border-gray-800/80" />
-                    </div>
+                    {/* Joystick virtual / Cruceta deslizable */}
+                    <TouchDirectionPad
+                      mode={directionPadMode}
+                      onPress={handleDirectionPress}
+                      onUnpress={handleDirectionUnpress}
+                      sizeClassName="w-[132px] h-[132px] xs:w-[140px] xs:h-[140px] sm:w-[148px] sm:h-[148px]"
+                    />
 
                     {/* Botones de acción A & B en escalón ergonómico + Turbo claramente separados */}
                     <div className="flex flex-col items-end gap-3 shrink-0">
