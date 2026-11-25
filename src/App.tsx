@@ -24,7 +24,6 @@ import {
   Minimize,
   Rewind,
   FastForward,
-  Sparkles,
   HelpCircle,
   FileUp,
   X,
@@ -34,7 +33,6 @@ import {
   Compass
 } from 'lucide-react';
 import mGBA, { type mGBAEmulator } from '@thenick775/mgba-wasm';
-import { generateHomebrewDemoRom } from './demoRom';
 import { CheatsModal } from './components/CheatsModal';
 import {
   TouchDirectionPad,
@@ -626,52 +624,6 @@ export default function App() {
     event.target.value = '';
   };
 
-  // Cargar la demo Homebrew interactiva integrada
-  const loadDemoRom = async () => {
-    let core = emulator;
-    if (!core) {
-      core = await initEmulator();
-      if (!core) return;
-    }
-
-    try {
-      setStatusMessage('Cargando Demo Homebrew...');
-      if (romLoaded) {
-        try {
-          core.quitGame();
-        } catch (_) {}
-      }
-
-      const demoBytes = generateHomebrewDemoRom();
-      const paths = core.filePaths();
-      const demoPath = `${paths.gamePath}/mgba_homebrew_demo.gb`;
-
-      core.FS.writeFile(demoPath, demoBytes);
-      const success = core.loadGame(demoPath);
-
-      if (success) {
-        setCurrentRomPath(demoPath);
-        setRomLoaded(true);
-        setIsRunning(true);
-        setIsPaused(false);
-        setRomName('Demo Homebrew (GB)');
-        setStatusMessage('¡Demo iniciada! Usa el D-pad para mover la nave, A y B para efectos.');
-        void applySavedCheatsForRom(core, demoPath);
-
-        setTimeout(() => {
-          canvasRef.current?.focus();
-          setIsCanvasFocused(true);
-        }, 300);
-      } else {
-        setStatusMessage('No se pudo iniciar la demo.');
-      }
-    } catch (err) {
-      console.error('Error al cargar la demo:', err);
-      setStatusMessage('Error al cargar demo: ' + String(err));
-    }
-    setTimeout(() => setStatusMessage(''), 4000);
-  };
-
   // Alternar pausa
   const togglePause = useCallback(() => {
     if (!emulator || !romLoaded) return;
@@ -1053,6 +1005,20 @@ export default function App() {
     setIsRewinding(false);
   };
 
+  // Control manual de Acelerar (Hold to Fast-Forward)
+  const startFastForward = () => {
+    if (!emulator || !romLoaded) return;
+    const boostSpeed = speed < 2.5 ? 2.5 : 3;
+    emulator.setFastForwardMultiplier(boostSpeed);
+    setIsTurboActive(true);
+  };
+
+  const stopFastForward = () => {
+    if (!emulator || !romLoaded) return;
+    emulator.setFastForwardMultiplier(speed);
+    setIsTurboActive(false);
+  };
+
   // Cambiar visualización del contador nativo FPS
   const toggleFps = () => {
     const nextVal = !fpsCounter;
@@ -1181,6 +1147,27 @@ export default function App() {
     onContextMenu: (e: React.MouseEvent) => e.preventDefault()
   };
 
+  // Control unificado de puntero para botón Acelerar (solo mientras se mantiene presionado)
+  const bindFastForwardPointer = {
+    onPointerDown: (e: React.PointerEvent) => {
+      e.preventDefault();
+      startFastForward();
+    },
+    onPointerUp: (e: React.PointerEvent) => {
+      e.preventDefault();
+      stopFastForward();
+    },
+    onPointerLeave: (e: React.PointerEvent) => {
+      e.preventDefault();
+      stopFastForward();
+    },
+    onPointerCancel: (e: React.PointerEvent) => {
+      e.preventDefault();
+      stopFastForward();
+    },
+    onContextMenu: (e: React.MouseEvent) => e.preventDefault()
+  };
+
   // Alternar visibilidad de controles táctiles (móvil o escritorio)
   const toggleTouchControls = () => {
     if (isTouchOrMobile) {
@@ -1282,15 +1269,6 @@ export default function App() {
           >
             <FolderOpen size={14} />
             <span>{romLoaded ? 'Cambiar ROM' : 'Cargar ROM'}</span>
-          </button>
-
-          <button
-            onClick={loadDemoRom}
-            className="px-3 py-1.5 rounded-xl bg-gray-800 hover:bg-gray-700 border border-purple-500/30 text-amber-300 hover:text-white transition-all text-xs font-semibold flex items-center gap-1.5 cursor-pointer shadow-sm active:scale-95"
-            title="Probar Demo Homebrew integrada"
-          >
-            <Sparkles size={14} className="text-amber-400" />
-            <span>Demo</span>
           </button>
 
           <button
@@ -1426,6 +1404,16 @@ export default function App() {
                           <Rewind size={11} />
                           <span className="hidden sm:inline">Rebobinar</span>
                         </button>
+                        <button
+                          {...bindFastForwardPointer}
+                          className={`px-2 py-1 rounded text-[10px] font-mono flex items-center gap-1 transition-all cursor-pointer touch-none select-none ${
+                            isTurboActive ? 'bg-purple-600 text-white animate-pulse' : 'bg-gray-800 hover:bg-gray-700 text-purple-300'
+                          }`}
+                          title="Mantén presionado para acelerar (Tecla Espacio)"
+                        >
+                          <FastForward size={11} />
+                          <span className="hidden sm:inline">Acelerar</span>
+                        </button>
                         {shouldShowTouchControls && (
                           <button
                             onClick={toggleDirectionPadMode}
@@ -1466,9 +1454,6 @@ export default function App() {
                         </button>
                       </>
                     )}
-                    <div className="text-[10px] tracking-wider text-gray-500 font-mono hidden sm:inline">
-                      {romLoaded ? `${colorFilter.toUpperCase()}-MATRIX` : 'AUTO-DETECTION'}
-                    </div>
                   </div>
                 </div>
 
@@ -1635,15 +1620,9 @@ export default function App() {
                     <div className="flex flex-row gap-2 w-full justify-center">
                       <button
                         onClick={() => fileInputRef.current?.click()}
-                        className="flex-1 px-4 py-2.5 bg-purple-600 hover:bg-purple-500 text-white rounded-xl font-bold text-xs tracking-wider transition-colors shadow-md shadow-purple-950/40 cursor-pointer flex items-center justify-center gap-1.5"
+                        className="w-full px-4 py-2.5 bg-purple-600 hover:bg-purple-500 text-white rounded-xl font-bold text-xs tracking-wider transition-colors shadow-md shadow-purple-950/40 cursor-pointer flex items-center justify-center gap-1.5"
                       >
                         <Upload size={14} /> Cargar ROM Local
-                      </button>
-                      <button
-                        onClick={loadDemoRom}
-                        className="px-4 py-2.5 bg-gray-800 hover:bg-gray-700 border border-gray-700 text-amber-300 hover:text-white rounded-xl font-bold text-xs transition-colors cursor-pointer flex items-center justify-center gap-1.5"
-                      >
-                        <Sparkles size={14} /> Probar Demo
                       </button>
                     </div>
                   </div>
@@ -1774,27 +1753,39 @@ export default function App() {
                   }`}
                 >
 
-                  {/* Botones de hombro L & R en panel superior */}
-                  <div className="flex justify-between items-center gap-2 mb-3.5 px-0.5">
+                  {/* Botones de hombro L & R + Rebobinar / Acelerar en panel superior */}
+                  <div className="flex justify-between items-center gap-1.5 mb-3.5 px-0.5">
                     <button
-                      className="px-4 py-2 bg-gray-800 active:bg-purple-600 border border-gray-700/60 hover:bg-gray-700 text-[11px] sm:text-xs font-bold text-gray-200 rounded-xl active:scale-95 transition-all select-none touch-none shadow"
+                      className="px-3.5 py-2 bg-gray-800 active:bg-purple-600 border border-gray-700/60 hover:bg-gray-700 text-[11px] sm:text-xs font-bold text-gray-200 rounded-xl active:scale-95 transition-all select-none touch-none shadow"
                       {...bindTouch('L')}
                     >
-                      L Shoulder
+                      L
                     </button>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        {...bindRewindPointer}
+                        className={`px-2.5 py-1.5 rounded-xl text-[10px] font-mono flex items-center gap-1 font-bold select-none touch-none transition-all ${
+                          isRewinding ? 'bg-amber-600 text-white animate-pulse' : 'bg-gray-800 text-amber-400 border border-gray-700/70'
+                        }`}
+                        title="Mantén presionado para rebobinar"
+                      >
+                        <Rewind size={12} /> Rebobinar
+                      </button>
+                      <button
+                        {...bindFastForwardPointer}
+                        className={`px-2.5 py-1.5 rounded-xl text-[10px] font-mono flex items-center gap-1 font-bold select-none touch-none transition-all ${
+                          isTurboActive ? 'bg-purple-600 text-white animate-pulse' : 'bg-gray-800 text-purple-300 border border-gray-700/70'
+                        }`}
+                        title="Mantén presionado para acelerar"
+                      >
+                        <FastForward size={12} /> Acelerar
+                      </button>
+                    </div>
                     <button
-                      {...bindRewindPointer}
-                      className={`px-3 py-1.5 rounded-xl text-[10px] font-mono flex items-center gap-1.5 font-bold select-none touch-none transition-all ${
-                        isRewinding ? 'bg-amber-600 text-white animate-pulse' : 'bg-gray-800 text-amber-400 border border-gray-700/70'
-                      }`}
-                    >
-                      <Rewind size={12} /> Rebobinar
-                    </button>
-                    <button
-                      className="px-4 py-2 bg-gray-800 active:bg-purple-600 border border-gray-700/60 hover:bg-gray-700 text-[11px] sm:text-xs font-bold text-gray-200 rounded-xl active:scale-95 transition-all select-none touch-none shadow"
+                      className="px-3.5 py-2 bg-gray-800 active:bg-purple-600 border border-gray-700/60 hover:bg-gray-700 text-[11px] sm:text-xs font-bold text-gray-200 rounded-xl active:scale-95 transition-all select-none touch-none shadow"
                       {...bindTouch('R')}
                     >
-                      R Shoulder
+                      R
                     </button>
                   </div>
 
@@ -1986,12 +1977,8 @@ export default function App() {
 
                 {/* Botón Rebobinar */}
                 <button
-                  onMouseDown={startRewind}
-                  onMouseUp={stopRewind}
-                  onMouseLeave={stopRewind}
-                  onTouchStart={startRewind}
-                  onTouchEnd={stopRewind}
-                  className={`w-full py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer select-none active:scale-95 shadow ${
+                  {...bindRewindPointer}
+                  className={`w-full py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer select-none touch-none active:scale-95 shadow ${
                     isRewinding
                       ? 'bg-amber-600 text-white ring-2 ring-amber-400 animate-pulse'
                       : 'bg-gray-850 hover:bg-gray-800 text-amber-400 border border-amber-900/40'
@@ -2249,12 +2236,6 @@ export default function App() {
                 >
                   <Upload size={14} /> Seleccionar Archivo ROM (.gba / .gbc / .gb)
                 </button>
-                <button
-                  onClick={loadDemoRom}
-                  className="w-full py-2 bg-gray-800 hover:bg-gray-700 border border-gray-700 text-amber-300 rounded-xl font-bold text-xs flex items-center justify-center gap-2 cursor-pointer"
-                >
-                  <Sparkles size={14} /> Jugar Demo Integrada
-                </button>
               </div>
             </div>
           )}
@@ -2375,18 +2356,6 @@ export default function App() {
         onExportCheatsFile={handleExportCheatsFile}
         onRequestLoadRom={() => fileInputRef.current?.click()}
       />
-
-      {/* ADVERTENCIA DE COMPATIBILIDAD CON ENTORNO IFRAME */}
-      <footer className="w-full max-w-5xl mt-12 pt-6 border-t border-gray-800/40 text-center flex flex-col sm:flex-row items-center justify-between gap-4 z-10 font-mono text-[10px] text-gray-500">
-        <div className="flex items-center gap-2">
-          <Smartphone size={12} className="text-purple-400" />
-          <span>Controles táctiles optimizados para tablets y móviles</span>
-        </div>
-        <div className="flex items-center gap-2.5">
-          <span className="p-1 bg-yellow-950/20 text-yellow-500 rounded border border-yellow-800/35">Pestaña Nueva Recomendada</span>
-          <span className="max-w-xs text-left">Presiona el ícono ⊞ del visor de AI Studio para maximizar audio y prevenir cualquier tipo de retraso.</span>
-        </div>
-      </footer>
 
     </div>
   );
